@@ -5,7 +5,9 @@ Helper function used to check board version and import matching packages.
 from typing import Tuple, List
 from types import ModuleType
 
-from pkg_resources import parse_version
+# from pkg_resources import parse_version
+from importlib.metadata import version
+from packaging.version import parse
 
 import samna
 
@@ -98,10 +100,10 @@ def check_firmware_versions(
     # - Read device firmware versions
     vers = dev.get_firmware_versions()
 
-    if parse_version(vers.fxtree) < parse_version(min_fxtree_ver):
+    if parse(vers.fxtree) < parse(min_fxtree_ver):
         return False
 
-    if parse_version(vers.unifirm) < parse_version(min_unifirm_ver):
+    if parse(vers.unifirm) < parse(min_unifirm_ver):
         return False
 
     return True

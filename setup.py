@@ -9,7 +9,7 @@ setup_args = {
     "author_email": "dylan.muir@synsense.ai",
     "version": __version__,
     "packages": setuptools.find_packages(),
-    "install_requires": ["numpy", "scipy"],
+    "install_requires": ["numpy", "scipy", "packaging"],
     "extras_require": {
         "numba": [
             "numba",
