@@ -35,3 +35,12 @@ except (ImportError, ModuleNotFoundError) as err:
         SynNet = missing_backend_shim("SynNet", "torch")
     else:
         raise
+
+
+try:
+    from .synnet_qat import *
+except (ImportError, ModuleNotFoundError) as err:
+    if not backend_available("torch"):
+        SynNet = missing_backend_shim("SynNet", "torch")
+    else:
+        raise

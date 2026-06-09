@@ -22,7 +22,7 @@ from rockpool.graph import (
     LinearWeights,
 )
 
-__all__ = ["LIFTorch"]
+__all__ = ["LIFTorch", "LIFTorchQAT"]
 
 
 class StepPWL(torch.autograd.Function):
@@ -726,3 +726,128 @@ class LIFTorch(LIFBaseTorch):
 
         # - Return output
         return self._record_dict["spikes"]
+
+class LIFTorchQAT(LIFTorch):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.qat_enabled = False
+        self.qat_alpha = 0.0
+        self.qat_scale = None
+
+
+    def forward(self, input_data: torch.Tensor) -> torch.Tensor:
+        """
+        forward  method for processing data through this layer
+        Adds synaptic inputs to the synaptic states and mimics the Leaky Integrate and Fire dynamics
+
+        Args:
+            input_data (torch.Tensor): Data takes the shape of (batch, time_steps, n_synapses)
+
+        Returns:
+            torch.Tensor: Out of spikes with the shape (batch, time_steps, Nout)
+        """
+
+        # --- extract threshold tensor
+        th = self.threshold
+        
+        if hasattr(th, "value"):
+            th_val = th.value
+        else:
+            th_val = th
+        
+        # --- compute effective threshold
+        if self.qat_enabled and self.qat_scale is not None:
+            scale = self.qat_scale
+        
+            th_q = torch.round(th_val * scale) / scale
+            th_eff = th_val + self.qat_alpha * (th_q - th_val).detach()
+        else:
+            th_eff = th_val
+
+        # - Auto-batch over input data
+        input_data, (vmem, spikes, isyn) = self._auto_batch(
+            input_data,
+            (self.vmem, self.spikes, self.isyn),
+            (
+                (self.size_out,),
+                (self.size_out,),
+                (self.size_out, self.n_synapses),
+            ),
+        )
+        n_batches, n_timesteps, _ = input_data.shape
+
+        # - Reshape data over separate input synapses
+        input_data = input_data.reshape(
+            n_batches, n_timesteps, self.size_out, self.n_synapses
+        )
+
+        # - Set up state record and output
+        if self._record:
+            self._record_dict["vmem"] = torch.zeros(
+                n_batches, n_timesteps, self.size_out
+            )
+            self._record_dict["isyn"] = torch.zeros(
+                n_batches, n_timesteps, self.size_out, self.n_synapses
+            )
+            self._record_dict["irec"] = torch.zeros(
+                n_batches, n_timesteps, self.size_out, self.n_synapses
+            )
+
+        self._record_dict["spikes"] = torch.zeros(
+            n_batches, n_timesteps, self.size_out, device=input_data.device
+        )
+
+        noise_zeta = self.noise_std * torch.sqrt(torch.tensor(self.dt))
+
+        # - Generate membrane noise trace
+        noise_ts = noise_zeta * torch.randn(
+            (n_batches, n_timesteps, self.size_out), device=vmem.device
+        )
+
+        # - Loop over time
+        for t in range(n_timesteps):
+            # Integrate synaptic input
+            isyn = isyn + input_data[:, t]
+
+            # - Apply spikes over the recurrent weights
+            if hasattr(self, "w_rec"):
+                irec = F.linear(spikes, self.w_rec.T).reshape(
+                    n_batches, self.size_out, self.n_synapses
+                )
+                isyn = isyn + irec
+
+            # Decay synaptic and membrane state
+            vmem *= self.alpha.to(vmem.device)
+            isyn *= self.beta.to(isyn.device)
+
+            # Integrate membrane state and apply noise
+            vmem = vmem + isyn.sum(2) + noise_ts[:, t, :] + self.bias
+
+            # - Spike generation
+            spikes = self.spike_generation_fn(
+                vmem, th_eff, self.learning_window, self.max_spikes_per_dt
+            )
+
+            # - Apply subtractive membrane reset
+            vmem = vmem - spikes * th_eff
+
+            # - Maintain state record
+            if self._record:
+                self._record_dict["vmem"][:, t] = vmem
+                self._record_dict["isyn"][:, t] = isyn
+
+                if hasattr(self, "w_rec"):
+                    self._record_dict["irec"][:, t] = irec
+
+            # - Maintain output spike record
+            self._record_dict["spikes"][:, t] = spikes
+
+        # - Update states
+        self.vmem = vmem[0].detach()
+        self.isyn = isyn[0].detach()
+        self.spikes = spikes[0].detach()
+
+        # - Return output
+        return self._record_dict["spikes"]
+

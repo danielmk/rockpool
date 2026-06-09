@@ -15,7 +15,9 @@ import torch.nn.init as init
 import torch.nn.functional as F
 import rockpool.parameters as rp
 
-__all__ = ["LinearTorch"]
+import pdb
+
+__all__ = ["LinearTorch", "LinearTorchQAT"]
 
 # - Define a float / array type
 FloatVector = Union[float, np.ndarray, torch.Tensor]
@@ -153,4 +155,38 @@ class LinearTorch(TorchModule):
             self,
             self.weight,
             self.bias,
+        )
+
+
+
+class LinearTorchQAT(LinearTorch):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # QAT control variables
+        self.qat_enabled = False
+        self.qat_alpha = 0.0
+        self.qat_scale = None
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+
+        input, _ = self._auto_batch(input)
+
+        W = self.weight
+
+        if self.qat_enabled and self.qat_scale is not None:
+            scale = self.qat_scale
+
+            # --- quantization
+            W_q = torch.round(W * scale).clamp(-127, 127) / scale
+
+            # --- gradual QAT (THIS IS THE KEY)
+            W_eff = W + self.qat_alpha * (W_q - W).detach()
+        else:
+            W_eff = W
+
+        return (
+            F.linear(input, W_eff.T, self.bias)
+            if self.bias is not None
+            else F.linear(input, W_eff.T)
         )
