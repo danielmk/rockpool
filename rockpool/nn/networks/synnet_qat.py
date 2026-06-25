@@ -96,6 +96,7 @@ class SynNetQAT(TorchModule):
         )
 
         self.qat_alpha = 0
+        self.qat_enabled = False
 
         if len(size_hidden_layers) != len(time_constants_per_layer):
             raise ValueError(
