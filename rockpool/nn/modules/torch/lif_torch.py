@@ -734,6 +734,7 @@ class LIFTorchQAT(LIFTorch):
         self.qat_enabled = False
         self.qat_alpha = 0.0
         self.qat_scale = None
+        self.qat_quantize_decay = False  # if True, also fake-quantize the dash (bitshift) decays
 
 
     def forward(self, input_data: torch.Tensor) -> torch.Tensor:
@@ -764,6 +765,30 @@ class LIFTorchQAT(LIFTorch):
             th_eff = th_val + self.qat_alpha * (th_q - th_val).detach()
         else:
             th_eff = th_val
+
+        # --- compute effective (dash / bitshift) quantized decays
+        # The deployed chip decays with integer bitshifts, dash = round(-log2(1 - decay)),
+        # decay = 1 - 1/2**dash. Fake-quantize with a straight-through estimator so the
+        # weights/thresholds learn against the real deployed dynamics.
+        if self.qat_enabled and self.qat_quantize_decay:
+            alpha = self.alpha
+            beta = self.beta
+
+            # clamp away from 1.0 so -log2(1 - decay) stays finite
+            alpha_c = torch.clamp(alpha, max=1.0 - 1e-6)
+            beta_c = torch.clamp(beta, max=1.0 - 1e-6)
+
+            dash_mem_q = torch.round(decay_to_bitshift(alpha_c)[0]).clamp(min=0)
+            dash_syn_q = torch.round(decay_to_bitshift(beta_c)[0]).clamp(min=0)
+
+            alpha_q = bitshift_to_decay(dash_mem_q)[0]
+            beta_q = bitshift_to_decay(dash_syn_q)[0]
+
+            alpha_eff = alpha + self.qat_alpha * (alpha_q - alpha).detach()
+            beta_eff = beta + self.qat_alpha * (beta_q - beta).detach()
+        else:
+            alpha_eff = self.alpha
+            beta_eff = self.beta
 
         # - Auto-batch over input data
         input_data, (vmem, spikes, isyn) = self._auto_batch(
@@ -818,8 +843,8 @@ class LIFTorchQAT(LIFTorch):
                 isyn = isyn + irec
 
             # Decay synaptic and membrane state
-            vmem *= self.alpha.to(vmem.device)
-            isyn *= self.beta.to(isyn.device)
+            vmem *= alpha_eff.to(vmem.device)
+            isyn *= beta_eff.to(isyn.device)
 
             # Integrate membrane state and apply noise
             vmem = vmem + isyn.sum(2) + noise_ts[:, t, :] + self.bias

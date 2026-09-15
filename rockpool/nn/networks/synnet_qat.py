@@ -97,6 +97,7 @@ class SynNetQAT(TorchModule):
 
         self.qat_alpha = 0
         self.qat_enabled = False
+        self.qat_quantize_decay = False  # if True, also fake-quantize the dash (bitshift) decays
 
         if len(size_hidden_layers) != len(time_constants_per_layer):
             raise ValueError(
@@ -307,9 +308,10 @@ class SynNetQAT(TorchModule):
                 
         # PASS THE SCALES TO THE NEURON MODULES
         for i, module in enumerate(neuron_modules):
-            module.qat_enabled = True
+            module.qat_enabled = self.qat_enabled
             module.qat_alpha = self.qat_alpha
-        
+            module.qat_quantize_decay = self.qat_quantize_decay
+
             if i == len(neuron_modules) - 1:
                 module.qat_scale = self.output_scale
             else:
