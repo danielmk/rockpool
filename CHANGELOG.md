@@ -5,8 +5,17 @@ All notable changes between Rockpool releases will be documented in this file
 ## [Unreleased]
 
 ### Added
+
+* More detailed description about power measurement in XyloAudio 3.
+* Add missing implementation for use of the second synapses in XyloAudio 3. Implementation was incomplete in the front-end.
+
 ### Changed
 ### Fixed
+
+* pkg_resources was removed from setuptools>=82, fix Rockpool code to not depend on it anymore. Now using packaging.
+* Update jax.numpy.clip arguments (deprecated a_max, a_min) and uses max, min instead.
+* jax.numpy.fix was deprecated in JAX v0.9.0, and will be removed in JAX v0.10.0. Using jax.numpy.trunc instead.
+
 ### Deprecated
 ### Removed
 ### Security
